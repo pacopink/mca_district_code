@@ -38,5 +38,5 @@ area_code_lookup = area_code_map(FILE)
 
 
 if __name__=='__main__':
-    print(area_code_lookup('440583198106174516'))
-    print(area_code_lookup('441202198008200529'))
+    print(area_code_lookup('440583************'))
+    print(area_code_lookup('441202************'))
