@@ -3,7 +3,7 @@ import collections
 # 一个身份证号解析后出来的结果
 IdInfo = collections.namedtuple('IdInfo',
                                 ['name', 'code', 'validity', 'gender',
-                                 'district_code', 'district_info', 'birthday'])
+                                 'district_info', 'birthday'])
 
 
 # 最终目标是要获得这样的具名元组, 含历史的（out_date字段表示在什么YYYYMM取消的code, 这些code某些身份证号还在用，所以需要
