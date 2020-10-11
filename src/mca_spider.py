@@ -5,6 +5,10 @@ import urllib.request
 from bs4 import BeautifulSoup
 import re
 from data_struct import *
+import concurrent.futures
+
+# 控制并发度，不建议太高可能会被网站封IP
+WORKERS = 2
 
 # 民政部网站主页
 PREFIX = 'http://www.mca.gov.cn'
@@ -23,6 +27,7 @@ r2 = re.compile(r'\d{4}年.*行政区划代码.*截止([12]\d{3})年(\d{1,2})月
 def get_link(self):
     """预期传入一个CodeLink，有link字段就返回link，否则返回href"""
     return self.link if self.link is not None else self.href
+
 
 # monkey patch on CodeLink to get a valid link
 CodeLink.get_link = get_link
@@ -51,33 +56,39 @@ def get_real_link(link):
             return i.attrs['href']
 
 
+def get_code_link(link):
+    print(link)
+    data = urllib.request.urlopen(link, timeout=10).read()
+    soup = BeautifulSoup(data.decode('utf8'), 'html.parser')
+    l = []
+    for i in soup.find_all("a"):
+        if 'title' in i.attrs and 'href' in i.attrs:
+            title = i.attrs['title']
+            m = r.match(title)
+            if m is None:
+                m = r2.match(title)
+
+            if m is not None:
+                y, mm = [int(i) for i in m.groups()]
+                month = "%04d%02d" % (y, mm)
+                href = PREFIX + i.attrs['href']
+                # 分析href，获得实际的地区码地址的link
+                link = get_real_link(href)
+                l.append(CodeLink(month, href, link, title))
+    return l
+
+
 def get_code_links(*args):
     """从传入的多个地区码列表页读取到每个时期的地区码链接列表"""
-    result = []
-    for link in args:
-        print(link)
-        data = urllib.request.urlopen(link, timeout=10).read()
-        soup = BeautifulSoup(data.decode('utf8'), 'html.parser')
-        for i in soup.find_all("a"):
-            if 'title' in i.attrs and 'href' in i.attrs:
-                title = i.attrs['title']
-                m = r.match(title)
-                if m is None:
-                    m = r2.match(title)
-
-                if m is not None:
-                    y, mm = [int(i) for i in m.groups()]
-                    month = "%04d%02d" % (y, mm)
-                    href = PREFIX + i.attrs['href']
-                    # 分析href，获得实际的地区码地址的link
-                    link = get_real_link(href)
-                    result.append(CodeLink(month, href, link, title))
-    return result
+    with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as executor:
+        from itertools import chain
+        # 返回含多个列表的列表，通过*展开后由chain做flatten
+        return list(chain(*executor.map(get_code_link, list(args))))
 
 
 def generate_code_map(h, link):
     '''请求地区码页面到字典'''
-    data = urllib.request.urlopen(link, timeout=10).read()
+    data = urllib.request.urlopen(link, timeout=30).read()
     soup = BeautifulSoup(data.decode('utf8'), 'html.parser')
 
     r = re.compile(r"\d{6}")
@@ -119,6 +130,7 @@ def generate_code_map(h, link):
                     code = None
     return count
 
+
 def code_link_to_map(l):
     """CodeLink to (month, map{code->DistrictInfo}"""
     print("processing:", l)
@@ -137,7 +149,8 @@ if __name__ == '__main__':
     # 按时间倒序，最新一个被第一个处理
     result.sort(key=lambda x: x.month, reverse=True)
     # 按顺序，每个CodeLink获取到对应的list(month, map{code->DistrictInfo})列表，列表元素是month和code字典的2元组
-    historical_list = filter(None, [code_link_to_map(l) for l in result])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as executor:
+        historical_list = list(filter(None, executor.map(code_link_to_map, result)))
 
     # 倒序扫描每个时期的地区码结果字典，更新时间点
     INFINITE_YYYYMM = '999999'
@@ -161,5 +174,5 @@ if __name__ == '__main__':
 
     with open(DISTRICT_CODE_FILE, "wb") as f:
         for key in sorted(final_dict.keys()):
-            print(final_dict[key])
+            # print(final_dict[key])
             f.write((",".join(final_dict[key]) + "\n").encode("utf8"))
